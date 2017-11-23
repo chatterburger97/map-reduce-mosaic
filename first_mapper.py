@@ -11,11 +11,6 @@ img_as_array = lambda rawdata: np.asarray(Image.open(StringIO(rawdata)))
 get_type = lambda rdd_or_var: type(rdd_or_var)
 rgb_nparray_to_cvimg = lambda nparr: cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
-def img_shape(cvimg):
-    height, width, something = np.asarray(cvimg.toLocalIterator()).shape
-    return height, width, something
-
-
 def main():
     sc = SparkContext(appName="tileMapper")
     imgBinary = sc.binaryFiles("/user/bitnami/allsmiles.jpg")
@@ -23,12 +18,12 @@ def main():
     img_rgb_matrix.collect()
 
     print("XCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCX")
-    # img_rgb_matrix.foreach(print)
-
-    cv_img = img_rgb_matrix.mapValues(rgb_nparray_to_cvimg) # cannot get shape
-    print("XCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCX",
-    img_shape(cv_img))
     img_rgb_matrix.foreach(print)
+
+    # cv_img = img_rgb_matrix.mapValues(rgb_nparray_to_cvimg) # cannot get shape
+    print("XCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCXCXCXCXCXCXCXCX",
+    # img_shape(cv_img))
+    # img_rgb_matrix.foreach(print)
     # img_rgb_matrix.values().foreach(print)
 
     sc.stop()
