@@ -1,35 +1,42 @@
 from __future__ import print_function
 
-from StringIO import StringIO
-
-from PIL import Image
-
 import cv2
 
 import numpy as np
 
 from pyspark import SparkContext
 
-img_as_array = lambda rawdata: np.asarray(Image.open(StringIO(rawdata)))
-get_type = lambda rdd_or_var: type(rdd_or_var)
-rgb_nparray_to_cvimg = lambda nparr: cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-print_shape = lambda key, val: print(val.shape)
+import logging
+
+def tile_mapper():
+    print("I run on each tile")
 
 
-def shape_of_nparray(nparr):
-    print(nparr)
+def extract_opencv_features():
+
+    def extract_opencv_features_nested(imgfile_imgbytes):
+        try:
+            imgfilename, imgbytes = imgfile_imgbytes
+            nparr = np.fromstring(buffer(imgbytes), np.uint8)
+            img = cv2.imdecode(nparr, 0)
+            print(type(img))
+            print(img.shape)
+            return [img]
+        except Exception, e:
+            logging.exception(e)
+            return []
+
+    return extract_opencv_features_nested
+
 
 
 def main():
     sc = SparkContext(appName="tileMapper")
-    img_binary = sc.binaryFiles("/user/bitnami/allsmiles.jpg")
-
-    img_rgb_matrix = img_binary.mapValues(img_as_array)
-
-    print("XCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXCX")
-    img_rgb_matrix.foreach(print_shape)
-    print("XCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXCXXCXCXCXC")
-    sc.stop()
+    print("I do all the input output shit")
+    images = sc.binaryFiles("/user/bitnami/project_input/")
+    features = images.map(extract_opencv_features())
+    features.foreach(print)
+    print(type(features))
 
 if __name__ == '__main__':
     main()
