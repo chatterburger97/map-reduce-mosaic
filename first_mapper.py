@@ -19,8 +19,9 @@ def extract_opencv_tiles():
             imgfilename, imgbytes = imgfile_imgbytes
             nparr = np.fromstring(buffer(imgbytes), np.uint8)
             img = cv2.imdecode(nparr, 0)
-            print(type(img))
-            print(img.shape)
+            print(type(img), "is the type of the ndarray representaion of the image")
+            height,width,_ = img.shape
+            print(img.shape, " is the shape of the image ndarray")
             return [img]
         except Exception, e:
             logging.exception(e)
