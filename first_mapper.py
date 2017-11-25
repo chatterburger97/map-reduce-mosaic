@@ -58,9 +58,10 @@ def main():
     print("I do all the input output jazz")
     images = sc.binaryFiles("/user/bitnami/project_input/")
     tiles = images.map(extract_opencv_tiles())
-    output = tiles.flatMap(tile_mapper())
+    tiles.foreach(tile_mapper)
+    # output = tiles.flatMap(tile_mapper())
     # output.foreach(print)
-    print(output.take(1))
+    # print(output.take(1))
 
 if __name__ == '__main__':
     main()
