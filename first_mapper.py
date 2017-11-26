@@ -14,6 +14,13 @@ import features
 
 from pyspark import SparkContext
 
+def calcEuclideanColourDistance(rgblist1, rgblist2):
+    sumSqrts = 0
+    sumSqrts+=math.pow((rgblist1[0] - rgblist2[0]), 2)
+    sumSqrts+=math.pow((rgblist1[1] - rgblist2[1]), 2)
+    sumSqrts+=math.pow((rgblist1[2] - rgblist2[2]), 2)
+    return math.sqrt(sumSqrts)
+
 def compute_tile_avgs(cvimg):
     block_width = gcd(cvimg.shape[0], cvimg.shape[1])
     block_height = block_width
@@ -67,14 +74,10 @@ def main():
     sc = SparkContext(appName="tileMapper")
     print("I do all the input output jazz")
     images = sc.binaryFiles("/user/bitnami/project_input/")
-    tile_avgs = images.map(extract_opencv_tiles())
+    tile_avgs = images.flatMap(extract_opencv_tiles())
 
-    # averages = tiles.map(tile_mapper())
-    # print(averages.take(1))
-
-    # output = tiles.flatMap(tile_mapper())
-    # output.foreach(print)
-    print(tile_avgs.take(1))
+    tile_avgs.collect()
+    tile_avgs.foreach(print)
 
 if __name__ == '__main__':
     main()
