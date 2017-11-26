@@ -14,6 +14,9 @@ import features
 
 from pyspark import SparkContext
 
+from PIL import Image
+
+
 def calcEuclideanColourDistance(rgblist1, rgblist2):
     sumSqrts = 0
     sumSqrts+=math.pow((rgblist1[0] - rgblist2[0]), 2)
@@ -38,21 +41,19 @@ def compute_tile_avgs(cvimg):
             x1 = x0 + block_width
             tile_avg = features.extractFeature(cvimg[y0:y1, x0:x1])
             tile_coords = [y0, y1, x0, x1]
-            tile_stats = (tile_coords, tile_avg)
+            tile_stats = [tile_coords, tile_avg]
             tile_avgs.append(tile_stats)
 
     return tile_avgs
 
 
 def extract_opencv_tiles():
-
     def extract_opencv_tiles_nested(imgfile_imgbytes):
         try:
             imgfilename, imgbytes = imgfile_imgbytes
             nparr = np.fromstring(buffer(imgbytes), np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             print(type(img), "is the type of the ndarray representation of the image")
-            # height,width,channels = img.shape
             
             height, width, channels = img.shape
             print (height, width, channels , " is the shape of the image ndarray ")
@@ -69,15 +70,35 @@ def extract_opencv_tiles():
 
     return extract_opencv_tiles_nested
 
+def return_avgs():
+
+    def return_avgs_nested(imgfile_imgbytes):
+        file_bytes = np.asarray(bytearray(imgfile_imgbytes[1]), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        return imgfile_imgbytes[0], features.extractFeature(img)
+
+    return return_avgs_nested
+
 
 def main():
     sc = SparkContext(appName="tileMapper")
     print("I do all the input output jazz")
-    images = sc.binaryFiles("/user/bitnami/project_input/")
-    tile_avgs = images.flatMap(extract_opencv_tiles())
+
+    ###########################################################################
+    big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
+    tile_avgs = big_image.flatMap(extract_opencv_tiles())
 
     tile_avgs.collect()
-    tile_avgs.foreach(print)
+    tile_avgs.foreach(print) # this works perfectly right now
+
+    tile_avgs.map(lambda l: [item for sublist in l for item in sublist]).saveAsTextFile("/user/bitnami/project_output/buckets.txt");
+    ############################################################################
+
+    small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=2)
+    imgname_imgavg_arrays = small_imgs.map(return_avgs())
+    imgname_imgavg_arrays.saveAsTextFile("/user/bitnami/project_output/to_put_in_buckets.txt")
+    sc.stop()
+
 
 if __name__ == '__main__':
     main()
