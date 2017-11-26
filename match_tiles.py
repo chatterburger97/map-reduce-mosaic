@@ -13,11 +13,7 @@ import logging
 import features
 
 from pyspark import SparkContext
-
-from PIL import Image
-
-
-global buckets
+ 
 
 def calcEuclideanColourDistance(rgblist1, rgblist2):
     sumSqrts = 0
@@ -76,7 +72,7 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     min_distance = 277
     small_img_avg = features.extractFeature(img)
-    buckets = bucketBroadcast.value
+     = bucketBroadcast.value
 
     dominant_colour_bucket = buckets[0]
     for bucket in buckets:
