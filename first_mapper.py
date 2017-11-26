@@ -46,7 +46,6 @@ def compute_tile_avgs(cvimg):
             tile_stats = [tile_coords, tile_avg]
             tile_avgs.append(tile_stats)
 
-    # print(buckets)
     return tile_avgs
 
 
@@ -56,14 +55,13 @@ def extract_opencv_tiles():
             imgfilename, imgbytes = imgfile_imgbytes
             nparr = np.fromstring(buffer(imgbytes), np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            print(type(img), "is the type of the ndarray representation of the image")
             
             height, width, channels = img.shape
-            print (height, width, channels , " is the shape of the image ndarray ")
+            
             square_size = gcd(height, width)
 
             img = cv2.resize(img, (width / square_size * square_size, height / square_size * square_size))
-            print (img.shape , " is the shape of the resized image ndarray ")
+            
             return compute_tile_avgs(img)
 
         except Exception, e:
@@ -79,25 +77,23 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
     min_distance = 277
     small_img_avg = features.extractFeature(img)
     buckets = bucketBroadcast.value
-    # print(buckets)
+
     dominant_colour_bucket = buckets[0]
     for bucket in buckets:
         current_distance = calcEuclideanColourDistance(bucket[1], small_img_avg)
-        print(current_distance, " I AM HERE")
         if (current_distance < min_distance):
             min_distance = current_distance
-            dominant_colour_bucket = bucket # has the coordinates of the tile of the dominant colour bucket
-    # # return tile/bucket's average color, (name of current small img, distance to bucket,
-    # #.. average of current small image, coordinates of tile (for the final stitch step))
+            dominant_colour_bucket = bucket
+    #  return tile/bucket's average color, (name of current small img, distance to bucket,
+    # .. average of current small image, coordinates of tile (for the final stitch step))
     return (dominant_colour_bucket[1], (imgfile_imgbytes[0], min_distance, features.extractFeature(img), dominant_colour_bucket[0]))
-    # return buckets.value[0]
-    # return small_img_avg
 
 
+# for all the small images corresponding to a particular tile bucket, find the one whose average colour is the closest 
+# to the tile colour
 def return_closest_avg():
     def return_closest_avg_nested(a, b):
-        print(a)
-        if(a[1][1] < b[1][1]) :
+        if(a[1][1] < b[1][1]) : # compare min distance of two images that have the same tile bucket
             return a
         else :
             return b
@@ -119,10 +115,8 @@ def main():
     broadcastBucket = sc.broadcast(buckets)
     small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=None)
     imgname_imgavg_arrays = small_imgs.map(lambda x: return_avgs(x, broadcastBucket))
-    # print(imgname_imgavg_arrays.take(1), " HIIIIIIIIIIIIIIIIIIIIIIELLOOOO")
     imgname_imgavg_arrays = imgname_imgavg_arrays.reduce(return_closest_avg())
-    print(imgname_imgavg_arrays)
-    # imgname_imgavg_arrays.saveAsTextFile("/user/bitnami/project_output/to_put_in_buckets.txt")
+    imgname_imgavg_arrays.saveAsTextFile("/user/bitnami/project_output/to_put_in_buckets.txt")
 
     sc.stop()
 
