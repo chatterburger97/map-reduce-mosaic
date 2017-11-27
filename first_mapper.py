@@ -83,21 +83,22 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
     dominant_colour_bucket = buckets[0]
     for bucket in buckets:
         current_distance = calcEuclideanColourDistance(bucket[1], small_img_avg)
-        print(current_distance, " I AM HERE")
+        # print(current_distance, " I AM HERE")
         if (current_distance < min_distance):
             min_distance = current_distance
             dominant_colour_bucket = bucket # has the coordinates of the tile of the dominant colour bucket
     # # return tile/bucket's average color, (name of current small img, distance to bucket,
     # #.. average of current small image, coordinates of tile (for the final stitch step))
-    return (dominant_colour_bucket[1], (imgfile_imgbytes[0], min_distance, features.extractFeature(img), dominant_colour_bucket[0]))
+    stringified_bucket_colour = str(dominant_colour_bucket[1][0]) + "," + str(dominant_colour_bucket[1][1]) + "," + str(dominant_colour_bucket[1][2])
+    return (stringified_bucket_colour, list([imgfile_imgbytes[0], min_distance, features.extractFeature(img), dominant_colour_bucket[0]]))
     # return buckets.value[0]
     # return small_img_avg
 
 
 def return_closest_avg():
     def return_closest_avg_nested(a, b):
-        print(a)
-        if(a[1][1] < b[1][1]) :
+        # print(a, " THIS IS WHAT IS GETTING PASSED, CHECK IF THE FIRST VALUE IS THE COORDINATES. IT SHOULD NOT BE.")
+        if(a[1] < b[1]) :
             return a
         else :
             return b
@@ -113,19 +114,15 @@ def main():
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
     tile_avgs = big_image.flatMap(extract_opencv_tiles())
     buckets = tile_avgs.collect()
-    tile_avgs.map(lambda l: [item for sublist in l for item in sublist]).saveAsTextFile("/user/bitnami/project_output/buckets.txt")
+    # tile_avgs.map(lambda l: [item for sublist in l for item in sublist]).saveAsTextFile("/user/bitnami/project_output/buckets.txt")
     ############################################################################
 
     broadcastBucket = sc.broadcast(buckets)
     small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=None)
-    imgname_imgavg_arrays = small_imgs.map(lambda x: return_avgs(x, broadcastBucket))
-    # print(imgname_imgavg_arrays.take(1), " HIIIIIIIIIIIIIIIIIIIIIIELLOOOO")
-    imgname_imgavg_arrays = imgname_imgavg_arrays.reduce(return_closest_avg())
-    print(imgname_imgavg_arrays)
-    # imgname_imgavg_arrays.saveAsTextFile("/user/bitnami/project_output/to_put_in_buckets.txt")
-
+    final_tiles = small_imgs.map(lambda x: return_avgs(x, broadcastBucket)).reduceByKey(return_closest_avg())
+    print(type(final_tiles))
+    final_tiles.foreach(print)
     sc.stop()
-
 
 if __name__ == '__main__':
     main()
