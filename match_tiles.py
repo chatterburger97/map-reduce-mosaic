@@ -13,8 +13,13 @@ import logging
 import features
 
 from pyspark import SparkContext
- 
 
+import random
+
+from pyspark.mllib.clustering import KMeans, KMeansModel
+ 
+INDEX_PATH = "./index/"
+    
 def calcEuclideanColourDistance(rgblist1, rgblist2):
     sumSqrts = 0
     sumSqrts+=math.pow((rgblist1[0] - rgblist2[0]), 2)
@@ -72,7 +77,7 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     min_distance = 277
     small_img_avg = features.extractFeature(img)
-     = bucketBroadcast.value
+    buckets = bucketBroadcast.value
 
     dominant_colour_bucket = buckets[0]
     for bucket in buckets:
@@ -96,26 +101,98 @@ def return_closest_avg():
 
     return return_closest_avg_nested
 
+def printImage(listImage,canvas,numCol,numRol,tileSize):
+    count = 0
+    print("Print Image",numCol)
+    print("Print Image",numRol)
+    for i in range(0, numRol):
+        for j in range(0, numCol):
+            canvas[i * tileSize:(i + 1) * tileSize, j * tileSize:(j + 1) * tileSize] = listImage[count]
+            count=count+1
+    return canvas
+
+def getIndex():
+    indexDict = dict()
+    with open('images_cluster.txt','r') as f:
+        for line in f:
+            word = line.rstrip('\n')
+            word = word.split(':')
+            key = word[1]
+            fileName = word[0]
+            if key in indexDict:
+                indexDict[word[1]].append(word[0])
+            else:
+                indexDict[word[1]] = [word[0]]
+                #indexDict[word[1]] = indexDict.get(word[1]) + ',' + word[0]
+    print(indexDict)
+    return indexDict
+          
+def findSmallImage(modelRef,tileRGB,tileSize,index):
+    targetClusterID = modelRef.predict(tileRGB)
+    print("Successful Match from K Means!!!",targetClusterID)
+    imageList = index.get(str(targetClusterID))
+    print("Image List",imageList)
+    chosen = random.choice(imageList)
+    print("Chosen",chosen)
+    imageRef = cv2.imread(INDEX_PATH + chosen)
+    imageRefResize = cv2.resize(imageRef, (tileSize,tileSize))
+    print("Retrived and Resized:",chosen)
+    return imageRefResize
 
 def main():
     sc = SparkContext(appName="tileMapper")
     print("I do all the input output jazz")
 
     ###########################################################################
-    big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
+    big_image = sc.binaryFiles("Reference/108103_sm.jpg")
     tile_avgs = big_image.flatMap(extract_opencv_tiles())
-    buckets = tile_avgs.collect()
-    tile_avgs.map(lambda l: [item for sublist in l for item in sublist]).saveAsTextFile("/user/bitnami/project_output/buckets.txt")
+    #buckets = tile_avgs.collect()
+    #print("Bucket",buckets)
+    tileMap = tile_avgs.map(lambda l: [item for sublist in l for item in sublist])
+    tileList = tileMap.collect()
+    print("Tile Map",tileMap)
+    print("Tile Map",tileMap.collect())
+    print("Tile List",tileList)
+    print("Tile LIst",type(tileList))
     ############################################################################
+    
+    clusterIndex = getIndex()
+    kmModel = KMeansModel.load(sc, "myModelPath")
+    readyToCombine = []
+    currentRow = None
+    noOfRow = 0
+    noOfCol = 0
+    firstTile = tileList[0]
+    tileSize = firstTile[1]
+    #Randomly Get small images using kmeans match
+    for tile in tileList:
+        if tile[0]==currentRow:
+            smallImg = findSmallImage(kmModel,[tile[4],tile[5],tile[6]],tileSize,clusterIndex)
+            readyToCombine.append(smallImg)
+            noOfCol = noOfCol + 1
+        else:
+            currentRow = tile[0]
+            noOfCol = 1
+            noOfRow = noOfRow + 1
+            currentRow = tile[0]
+            smallImg = findSmallImage(kmModel,[tile[4],tile[5],tile[6]],tileSize,clusterIndex)
+            readyToCombine.append(smallImg)
+    #Put small images into the big image canvas
+    
+    canvas = np.zeros((noOfRow*tileSize,noOfCol*tileSize,3), np.uint8)
+    
+    #Print Image
+    print("No. of Col",noOfCol)
+    print("No. of Row",noOfRow)
+    #print("Before Print, Check Once again",readyToCombine)
+    mosaicImage = printImage(readyToCombine,canvas,noOfCol,noOfRow,tileSize)
+    
 
-    broadcastBucket = sc.broadcast(buckets)
-    small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=None)
-    imgname_imgavg_arrays = small_imgs.map(lambda x: return_avgs(x, broadcastBucket))
-    imgname_imgavg_arrays = imgname_imgavg_arrays.reduce(return_closest_avg())
-    imgname_imgavg_arrays.saveAsTextFile("/user/bitnami/project_output/to_put_in_buckets.txt")
+    print("Finished processing of image")
+    cv2.imwrite('mosaicImageYeah.jpg', mosaicImage)
 
-    sc.stop()
+    
 
 
 if __name__ == '__main__':
-    main()
+	main()
