@@ -1,4 +1,5 @@
 from __future__ import print_function
+from functools import reduce1
 import math
 import cv2
 import numpy as np
@@ -13,7 +14,6 @@ def calcEuclideanColourDistance(rgblist1, rgblist2):
     sumSqrts += math.pow((rgblist1[1] - rgblist2[1]), 2)
     sumSqrts += math.pow((rgblist1[2] - rgblist2[2]), 2)
     return math.sqrt(sumSqrts)
-
 
 def compute_tile_avgs(cvimg, tile_height, tile_width):
     numrows = int(cvimg.shape[0]/tile_height)
@@ -35,6 +35,11 @@ def compute_tile_avgs(cvimg, tile_height, tile_width):
     return tile_avgs
 
 flatten = lambda l: [item for sublist in l for item in sublist]
+
+def stringify(vec):
+    stuff =  map(lambda value_in_vec: str(value_in_vec), vec)
+    more_stuff = reduce(lambda x, y: x + "," + y, stuff)
+    return more_stuff
 
 def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
     try:
@@ -61,17 +66,31 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
     buckets = bucketBroadcast.value
     dominant_colour_bucket = buckets[0]
 
+    bucket_distance_dict = {}
+
     for bucket in buckets:
+        stringified_bucket_colour = str(dominant_colour_bucket[1][0]) + "," + str(
+        dominant_colour_bucket[1][1]) + "," + str(dominant_colour_bucket[1][2])
         current_distance = calcEuclideanColourDistance(
             bucket[1], small_img_avg)
+        bucket_distance_dict[stringified_bucket_colour] = current_distance
         if (current_distance < min_distance):
             min_distance = current_distance
             dominant_colour_bucket = bucket
+
+    possible_buckets = []
+    for bucket in buckets:
+        stringified_bucket_colour = str(bucket[1][0]) + "," + str(
+        bucket[1][1]) + "," + str(bucket[1][2])
+        if (abs(bucket_distance_dict[stringified_bucket_colour] - min_distance) <= 30):
+            possible_buckets.append(stringified_bucket_colour, 
+                                    list([imgfile_imgbytes[0],/
+                                    bucket_distance_dict[stringified_bucket_colour],/
+                                    bucket[0]]))
+
     # # return tile/bucket's average color, (name of current small img, distance to bucket,
     # #.. average of current small image, coordinates of tile (for the final stitch step))
-    stringified_bucket_colour = str(dominant_colour_bucket[1][0]) + "," + str(
-        dominant_colour_bucket[1][1]) + "," + str(dominant_colour_bucket[1][2])
-    return (stringified_bucket_colour, list([imgfile_imgbytes[0], min_distance, dominant_colour_bucket[0]]))
+    return possible_buckets
 
 
 def return_closest_avg():
@@ -117,8 +136,7 @@ def main():
     ##########################################################################
     broadcastBucket = sc.broadcast(buckets)
     small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=None)
-    final_tiles = small_imgs.map(lambda x: return_avgs(
-        x, broadcastBucket)).reduceByKey(return_closest_avg())
+    final_tiles = small_imgs.flatMap(lambda x: return_avgs(x, broadcastBucket)).reduceByKey(return_closest_avg())
 
     img_tile_pairs = final_tiles.map(lambda k: return_final_pairs(k))
     img_tile_pairs_dict = img_tile_pairs.collectAsMap()
@@ -160,10 +178,9 @@ def main():
         file_bytes = np.asarray(bytearray(read_small_img[0][1]), dtype=np.uint8)
         read_small_img_rdd.unpersist()
         R = cv2.imdecode(file_bytes, 1)
-        # print(R.shape)
+        
         print(y0, y1, x0, x1)
         print((canvas[y0:y0 + tile_size, x0:x0 + tile_size]).shape)
-        # canvas[y0:y1, x0:x1] = cv2.resize(R, (4, 4))
         canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(R, (4, 4))
 
     cv2.imwrite('mosaic.jpg', canvas)
