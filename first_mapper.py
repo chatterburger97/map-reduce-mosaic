@@ -1,15 +1,9 @@
 from __future__ import print_function
-
 import math
-
 import cv2
-
 import numpy as np
-
 import logging
-
 import features
-
 from pyspark import SparkContext
 
 
@@ -41,7 +35,6 @@ def compute_tile_avgs(cvimg, tile_height, tile_width):
     return tile_avgs
 
 flatten = lambda l: [item for sublist in l for item in sublist]
-
 
 def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
     try:
@@ -117,7 +110,7 @@ def main():
 
     ###############big image tile averages computed in parallel################
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
-    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 32, 32))
+    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 4, 4))
     tile_avgs.persist()
     buckets = tile_avgs.collect()
 
@@ -129,50 +122,49 @@ def main():
 
     img_tile_pairs = final_tiles.map(lambda k: return_final_pairs(k))
     img_tile_pairs_dict = img_tile_pairs.collectAsMap()
-    img_tile_pairs.foreach(print)
+    print(img_tile_pairs_dict)
 
     # reconstruct final image
     flatbuckets = tile_avgs.map(flatten).collect()
-    readyToCombine = []
+    readyToCombine = {}
     currentRow = None
     noOfRow = 0
     noOfCol = 0
-    firstTile = flatbuckets[0]
-    tileSize = flatbuckets[0][1]
+    tile_size = flatbuckets[0][1]
 
     for tile in flatbuckets:
-        if tile[0] == currentRow:
-            correct_img = find_smallimg_path(img_tile_pairs_dict, [tile[0], tile[1], tile[
-                                             2], tile[3]])  # will return the path of the image
-            if correct_img is not None:
-                readyToCombine.append(correct_img)
+        if tile[0]==currentRow:
             noOfCol = noOfCol + 1
         else:
             currentRow = tile[0]
             noOfCol = 1
             noOfRow = noOfRow + 1
             currentRow = tile[0]
-            correct_img = find_smallimg_path(
-                img_tile_pairs_dict, [tile[0], tile[1], tile[2], tile[3]])
-            if correct_img is not None:
-                readyToCombine.append(correct_img)
+
+        correct_img = find_smallimg_path(img_tile_pairs_dict, [tile[0], tile[1], tile[2], tile[3]])
+
+        if correct_img is not None:  # will return the path of the image
+            stringified_tile_coordinates = str(tile[0]) + "," + str(tile[1]) + "," + str(tile[2]) + "," + str(tile[3])
+            readyToCombine[stringified_tile_coordinates] = correct_img
 
     # # Put small images into the big image canvas
-    canvas = np.zeros((noOfRow*tileSize, noOfCol*tileSize, 3), np.uint8)
-    count = 0
-    for i in range(0, noOfRow):
-        for j in range(0, noOfCol):
-            try:
-                read_small_img = sc.binaryFiles(
-                    readyToCombine[count], minPartitions=None).take(1)
-                file_bytes = np.asarray(
-                    bytearray(read_small_img[0][1]), dtype=np.uint8)
-                R = cv2.imdecode(file_bytes, 1)
-                canvas[i * tileSize:(i + 1) * tileSize, j * tileSize:(j + 1)
-                       * tileSize] = cv2.resize(R, (32, 32))
-                count = count + 1
-            except:
-                break
+    canvas = np.zeros((noOfRow*tile_size, noOfCol*tile_size, 3), np.uint8)
+    for key, value in readyToCombine.iteritems():
+        coords = key.split(",")
+        y0 = int(coords[0])
+        y1 = int(coords[1])
+        x0 = int(coords[2])
+        x1 = int(coords[3])
+        read_small_img_rdd = sc.binaryFiles(value, minPartitions=None)
+        read_small_img = read_small_img_rdd.take(1)
+        file_bytes = np.asarray(bytearray(read_small_img[0][1]), dtype=np.uint8)
+        read_small_img_rdd.unpersist()
+        R = cv2.imdecode(file_bytes, 1)
+        # print(R.shape)
+        print(y0, y1, x0, x1)
+        print((canvas[y0:y0 + tile_size, x0:x0 + tile_size]).shape)
+        # canvas[y0:y1, x0:x1] = cv2.resize(R, (4, 4))
+        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(R, (4, 4))
 
     cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
