@@ -15,6 +15,7 @@ def calcEuclideanColourDistance(rgblist1, rgblist2):
     sumSqrts += math.pow((rgblist1[2] - rgblist2[2]), 2)
     return math.sqrt(sumSqrts)
 
+
 def compute_tile_avgs(cvimg, tile_height, tile_width):
     numrows = int(cvimg.shape[0]/tile_height)
     numcols = int(cvimg.shape[1]/tile_width)
@@ -36,11 +37,13 @@ def compute_tile_avgs(cvimg, tile_height, tile_width):
 
 flatten = lambda l: [item for sublist in l for item in sublist]
 
+
 def stringify(vec):
     # print(vec, "THIS MUST BE ITERABLE, IT SEEMS")
-    stuff =  map(lambda value_in_vec: str(value_in_vec), vec)
+    stuff = map(lambda value_in_vec: str(value_in_vec), vec)
     more_stuff = reduce(lambda x, y: x + "," + y, stuff)
     return more_stuff
+
 
 def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
     try:
@@ -53,7 +56,7 @@ def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
         # print(height, width, channels, " is the shape of the image ndarray ")
         return compute_tile_avgs(img, tile_height, tile_width)
 
-    except Exception, e:
+    except e:
         logging.exception(e)
         return []
 
@@ -72,25 +75,28 @@ def return_avgs(imgfile_imgbytes, bucketBroadcast):
 
     # finds the optimum tile
     for bucket in buckets:
+        print(bucket, "I am a BUCKET")
         current_distance = calcEuclideanColourDistance(
             bucket[1], small_img_avg)
+        bucket_colour_vec = map(lambda vec: vec[1], best_colour_bucket)
+        bucket_colour_key = stringify(bucket_colour_vec)
+        bucket_distance_dict[bucket_colour_key] = current_distance
+
         if (current_distance < min_distance):
             min_distance = current_distance
             best_colour_bucket = bucket
-            bucket_colour_vec = map(lambda vec: vec[1], best_colour_bucket)
-            bucket_colour_key = stringify(bucket_colour_vec)
-            bucket_distance_dict[bucket_colour_key] = current_distance
 
-    # finds a few more tiles that are closer so that each small image can map to a range of colours of tiles instead of just 1
+    # finds a few more tiles that are closer so that each small image can map
+    # to a range of colours of tiles instead of just 1
     possible_buckets = []
     for bucket in buckets:
         current_bucket_colour = bucket[1]
+        current_bucket_coords = bucket[0]
+        print(current_bucket_colour, "I am  a colour triplet")
         current_bucket_colour_key = stringify(current_bucket_colour)
         if (current_bucket_colour_key in bucket_distance_dict and abs(bucket_distance_dict[current_bucket_colour_key] - min_distance) <= 20):
-            possible_buckets.append((bucket_colour_key, 
-                                                list([img_name,\
-                                                bucket_distance_dict[bucket_colour_key],\
-                                                bucket[0]])))
+            possible_buckets.append((current_bucket_colour_key, list(
+                [img_name, bucket_distance_dict[current_bucket_colour_key], current_bucket_coords])))
 
     return possible_buckets
 
@@ -117,8 +123,8 @@ def return_bytearray(imgfile_imgbytes):
     return img
 
 
-def find_smallimg_path(img_tile_pairs, coordList):
-    key = stringify(coordList[:4])
+def find_smallimg_path(img_tile_pairs_dict, coordList):
+    key = stringify(coordList)
     if key in img_tile_pairs:
         return img_tile_pairs[key]
     return
@@ -131,57 +137,60 @@ def main():
     ###############big image tile averages computed in parallel################
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
     tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 16, 16))
-    tile_avgs.persist()
     buckets = tile_avgs.collect()
 
     ##########################################################################
-    broadcastBucket = sc.broadcast(buckets)
-    small_imgs = sc.binaryFiles("/user/bitnami/small_imgs", minPartitions=None)
-    final_tiles = small_imgs.flatMap(lambda x: return_avgs(x, broadcastBucket)).reduceByKey(return_closest_avg())
+    broadcastBucket = sc.broadcast(buckets)  # this  isn't too big
+    small_imgs = sc.binaryFiles(
+        "/user/bitnami/small_dataset/", minPartitions=None)
+    final_tiles_mapped = small_imgs.flatMap(
+        lambda x: return_avgs(x, broadcastBucket))
+    # expected (bucket_colour_key, list([img_name, bucket_distance_dict[bucket_colour_key], current_bucket_coords]))
+    print(final_tiles_mapped.take(
+        1), "expected (bucket_colour_key, list([img_name, bucket_distance_dict[bucket_colour_key], current_bucket_coords]))")
+    # final_tiles_reduced = final_tiles_mapped.reduceByKey(return_closest_avg())
+    # img_tile_pairs = final_tiles_reduced.map(lambda k: return_final_pairs(k))
+    # img_tile_pairs_dict = img_tile_pairs.collectAsMap()
+    # # print(img_tile_pairs_dict)
 
-    img_tile_pairs = final_tiles.map(lambda k: return_final_pairs(k))
-    img_tile_pairs_dict = img_tile_pairs.collectAsMap()
-    # print(img_tile_pairs_dict)
+    # # reconstruct final image
+    # flatbuckets = tile_avgs.map(flatten).collect()
+    # readyToCombine = {}
+    # current_row = None
+    # no_of_row = 0
+    # no_of_col = 0
+    # tile_size = flatbuckets[0][1]
 
-    # reconstruct final image
-    flatbuckets = tile_avgs.map(flatten).collect()
-    readyToCombine = {}
-    currentRow = None
-    noOfRow = 0
-    noOfCol = 0
-    tile_size = flatbuckets[0][1]
+    # for tile in flatbuckets:
+    #     if tile[0] == current_row:
+    #         no_of_col += 1
+    #     else:
+    #         current_row = tile[0]
+    #         no_of_col = 1
+    #         no_of_row += 1
+    #         current_row = tile[0]
+    #     coord_list = tile[:4]
+    #     matched_img = find_smallimg_path(img_tile_pairs_dict, coord_list])
+    #     if matched_img is not None:  # will return the path of the image
+    #         coord_key = stringify(coord_list)
+    #         readyToCombine[coord_key] = matched_img
 
-    for tile in flatbuckets:
-        if tile[0]==currentRow:
-            noOfCol = noOfCol + 1
-        else:
-            currentRow = tile[0]
-            noOfCol = 1
-            noOfRow = noOfRow + 1
-            currentRow = tile[0]
+    # # # Put small images into the big image canvas
+    # canvas = np.zeros((no_of_row*tile_size, no_of_col*tile_size, 3), np.uint8)
+    # for coord_key, small_img_path in readyToCombine.iteritems():
+    #     coords = coord_key.split(",")
+    #     y0 = int(coords[0])
+    #     x0 = int(coords[2])
+    #     read_small_img_rdd = sc.binaryFiles(small_img_path, minPartitions=None)
+    #     read_small_img = read_small_img_rdd.take(1)
+    #     file_bytes = np.asarray(bytearray(read_small_img[0][1]), dtype=np.uint8)
+    #     read_small_img_rdd.unpersist()
+    #     R = cv2.imdecode(file_bytes, 1)
+    #     # print(y0, y1, x0, x1)
+    #     # print((canvas[y0:y0 + tile_size, x0:x0 + tile_size]).shape)
+    #     canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(R, (16, 16))
 
-        correct_img = find_smallimg_path(img_tile_pairs_dict, [tile[0], tile[1], tile[2], tile[3]])
-
-        if correct_img is not None:  # will return the path of the image
-            stringified_tile_coordinates = str(tile[0]) + "," + str(tile[1]) + "," + str(tile[2]) + "," + str(tile[3])
-            readyToCombine[stringified_tile_coordinates] = correct_img
-
-    # # Put small images into the big image canvas
-    canvas = np.zeros((noOfRow*tile_size, noOfCol*tile_size, 3), np.uint8)
-    for key, value in readyToCombine.iteritems():
-        coords = key.split(",")
-        y0 = int(coords[0])
-        x0 = int(coords[2])
-        read_small_img_rdd = sc.binaryFiles(value, minPartitions=None)
-        read_small_img = read_small_img_rdd.take(1)
-        file_bytes = np.asarray(bytearray(read_small_img[0][1]), dtype=np.uint8)
-        read_small_img_rdd.unpersist()
-        R = cv2.imdecode(file_bytes, 1)
-        # print(y0, y1, x0, x1)
-        # print((canvas[y0:y0 + tile_size, x0:x0 + tile_size]).shape)
-        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(R, (16, 16))
-
-    cv2.imwrite('mosaic.jpg', canvas)
+    # cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
 
 if __name__ == '__main__':
