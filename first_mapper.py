@@ -37,6 +37,7 @@ def compute_tile_avgs(cvimg, tile_height, tile_width):
 
 flatten = lambda l: [item for sublist in l for item in sublist]
 
+
 # for turning values that shouldn't be turned into keys, into exactly that. hashtag rebel
 def stringify(vec):
     stuff = map(lambda value_in_vec: str(value_in_vec), vec)
@@ -66,9 +67,8 @@ def get_possible_buckets(imgfile_imgbytes, bucketBroadcast):
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     smallimg_avg = features.extractFeature(img)
 
-    # finds the optimum tile    
+    # finds the optimum tile
     buckets = bucketBroadcast.value
-    best_colour_bucket = buckets[0]
     min_distance = 277
     bucket_distance_dict = {}
 
@@ -107,12 +107,12 @@ def return_bytearray(imgfile_imgbytes):
 def return_final_pairs(key_valuelist):
     smallimgpath_distance_tilecoords = key_valuelist[1]
     smallimgpath, distance, tilecoords = smallimgpath_distance_tilecoords
-    return (tilecoords, smallimgpath)
+    return (stringify(tilecoords), smallimgpath)
 
 def find_smallimg_path(tilecoords_imgpath_dict, coordList):
-    coordKey = stringify(coordList)
-    if coordKey in tilecoords_imgpath:
-        return tilecoords_imgpath[coordKey]
+    coordkey = stringify(coordList)
+    if coordkey in tilecoords_imgpath_dict:
+        return tilecoords_imgpath_dict[coordkey]
     return
 
 
@@ -122,7 +122,7 @@ def main():
 
     ###############big image tile averages computed in parallel################
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
-    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 16, 16))
+    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 256, 256))
     buckets = tile_avgs.collect()
 
     ##########################################################################
@@ -133,47 +133,44 @@ def main():
     final_tiles_reduced = final_tiles_mapped.reduceByKey(closest_avg_in_bucket())
 
     tilecoords_imgpath_rdd = final_tiles_reduced.map(lambda k: return_final_pairs(k))
+
     tilecoords_imgpath_dict = tilecoords_imgpath_rdd.collectAsMap()
-    for tilecoords, imgpath in tilecoords_imgpath_dict.iteritems():
-        print(tilecoords, imgpath)
-    # # reconstruct final image
-    # flatbuckets = tile_avgs.map(flatten).collect()
-    # readyToCombine = {}
-    # current_row = None
-    # no_of_row = 0
-    # no_of_col = 0
-    # tile_size = flatbuckets[0][1]
 
-    # for tile in flatbuckets:
-    #     if tile[0] == current_row:
-    #         no_of_col += 1
-    #     else:
-    #         current_row = tile[0]
-    #         no_of_col = 1
-    #         no_of_row += 1
-    #         current_row = tile[0]
-    #     coord_list = tile[:4]
-    #     matched_img = find_smallimg_path(tilecoords_imgpath_dict, coord_list)
-    #     if matched_img is not None:  # will return the path of the image
-    #         coord_key = stringify(coord_list)
-    #         readyToCombine[coord_key] = matched_img
+    # reconstruct final image
+    flatbuckets = tile_avgs.map(flatten).collect()
 
-    # # # Put small images into the big image canvas
-    # canvas = np.zeros((no_of_row*tile_size, no_of_col*tile_size, 3), np.uint8)
-    # for coord_key, smallimg_path in readyToCombine.iteritems():
-    #     coords = coord_key.split(",")
-    #     y0 = int(coords[0])
-    #     x0 = int(coords[2])
-    #     read_smallimg_rdd = sc.binaryFiles(smallimg_path, minPartitions=None)
-    #     read_smallimg = read_smallimg_rdd.take(1)
-    #     file_bytes = np.asarray(bytearray(read_smallimg[0][1]), dtype=np.uint8)
-    #     read_smallimg_rdd.unpersist()
-    #     R = cv2.imdecode(file_bytes, 1)
-    #     # print(y0, y1, x0, x1)
-    #     # print((canvas[y0:y0 + tile_size, x0:x0 + tile_size]).shape)
-    #     canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(R, (16, 16))
+    current_row = None
+    no_of_row = 0
+    no_of_col = 0
+    tile_size = flatbuckets[0][1]
 
-    # cv2.imwrite('mosaic.jpg', canvas)
+    for tile in flatbuckets:
+        if tile[0] == current_row:
+            no_of_col += 1
+        else:
+            current_row = tile[0]
+            no_of_col = 1
+            no_of_row += 1
+            current_row = tile[0]
+    canvas = np.zeros((no_of_row * tile_size, no_of_col * tile_size, 3), np.uint8)
+
+
+    ## Put small images into the big image canvas
+    for coord_key, smallimg_path in tilecoords_imgpath_dict.iteritems():
+        coords = coord_key.split(",")
+        y0 = int(coords[0])
+        x0 = int(coords[2])
+
+        read_smallimg_rdd = sc.binaryFiles(smallimg_path, minPartitions=None)
+        read_smallimg = read_smallimg_rdd.take(1)
+        file_bytes = np.asarray(bytearray(read_smallimg[0][1]), dtype=np.uint8)
+
+        read_smallimg_rdd.unpersist()
+
+        little_tile = cv2.imdecode(file_bytes, 1)
+        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (256, 256))
+
+    cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
 
 if __name__ == '__main__':
