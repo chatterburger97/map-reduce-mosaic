@@ -135,10 +135,11 @@ def main():
     tilecoords_imgpath_rdd = final_tiles_reduced.map(lambda k: return_final_pairs(k))
 
     tilecoords_imgpath_dict = tilecoords_imgpath_rdd.collectAsMap()
-
+    for ti in tilecoords_imgpath_dict:
+        print(ti)
+    print(len(tilecoords_imgpath_dict), "SHOULD BE 12")
     # reconstruct final image
     flatbuckets = tile_avgs.map(flatten).collect()
-
     current_row = None
     no_of_row = 0
     no_of_col = 0
@@ -168,7 +169,7 @@ def main():
         read_smallimg_rdd.unpersist()
 
         little_tile = cv2.imdecode(file_bytes, 1)
-        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (256, 256))
+        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (128, 128))
 
     cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
