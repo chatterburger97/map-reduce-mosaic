@@ -122,13 +122,13 @@ def main():
 
     ###############big image tile averages computed in parallel################
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
-    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 256, 256))
+    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 32, 32))
     buckets = tile_avgs.collect()
 
     ##########################################################################
     broadcastBucket = sc.broadcast(buckets)  # this isn't too big
     smallimgs = sc.binaryFiles(
-        "/user/bitnami/small_dataset/", minPartitions=None)
+        "/user/bitnami/big_dataset_2/", minPartitions=None)
     final_tiles_mapped = smallimgs.flatMap(lambda x: get_possible_buckets(x, broadcastBucket)) # expected (bucket_colour_key, list([img_name, bucket_distance_dict[bucket_colour_key], current_bucket_coords]))
     final_tiles_reduced = final_tiles_mapped.reduceByKey(closest_avg_in_bucket())
 
@@ -169,7 +169,7 @@ def main():
         read_smallimg_rdd.unpersist()
 
         little_tile = cv2.imdecode(file_bytes, 1)
-        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (128, 128))
+        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (32, 32))
 
     cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
