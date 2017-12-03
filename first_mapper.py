@@ -6,6 +6,7 @@ import numpy as np
 import logging
 import features
 from pyspark import SparkContext
+from pyspark.sql import SQLContext, Row
 
 
 def calcEuclideanColourDistance(rgblist1, rgblist2):
@@ -29,20 +30,38 @@ def compute_tile_avgs(cvimg, tile_height, tile_width):
             x0 = col * tile_width
             x1 = x0 + tile_width
             tile_avg = features.extractFeature(cvimg[y0:y1, x0:x1])
+            tile_avg_key = stringify(tile_avg)
             tile_coords = [y0, y1, x0, x1]
-            tile_stats = [tile_coords, tile_avg]
-            tile_avgs.append(tile_stats)
+            tile_avgs.append((tile_avg_key, tile_coords))
 
     return tile_avgs
+
+# thank you, random dude on SO for teaching me how to use combineByKey
+def Combiner(a):    #Turns value a (a tuple) into a list of a single tuple.
+    return [a]
+
+def MergeValue(a, b): #a is the new type [(,), (,), ..., (,)] and b is the old type (,)
+    a.extend([b])
+    return a
+
+def MergeCombiners(a, b): #a is the new type [(,),...,(,)] and so is b, combine them
+    a.extend(b)
+    return a
 
 flatten = lambda l: [item for sublist in l for item in sublist]
 
 
-# for turning values that shouldn't be turned into keys, into exactly that. hashtag rebel
+# for turning values that shouldn't be turned into keys, into exactly that
 def stringify(vec):
     stuff = map(lambda value_in_vec: str(value_in_vec), vec)
     more_stuff = reduce(lambda x, y: x + "," + y, stuff)
     return more_stuff
+
+
+def unstringify(strung):
+    unstrung_list = strung.split(",")
+    result = list(map(int, unstrung_list))
+    return result
 
 
 def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
@@ -50,9 +69,7 @@ def extract_opencv_tiles(imgfile_imgbytes, tile_height, tile_width):
         imgfilename, imgbytes = imgfile_imgbytes
         nparr = np.fromstring(buffer(imgbytes), np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        # print(type(img), "is the type of the ndarray representation of the image")
         height, width, channels = img.shape
-        # print(height, width, channels, " is the shape of the image ndarray ")
         return compute_tile_avgs(img, tile_height, tile_width)
 
     except e:
@@ -67,28 +84,27 @@ def get_possible_buckets(imgfile_imgbytes, bucketBroadcast):
     img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     smallimg_avg = features.extractFeature(img)
 
-    # finds the optimum tile
-    buckets = bucketBroadcast.value
+    # finds the optimum colour bucket
+    bucketcolour_alltilesinbucket_dict = bucketBroadcast.value
+
     min_distance = 277
-    bucket_distance_dict = {}
+    bestbucket = bucketcolour_alltilesinbucket_dict.iterkeys().next() # starts with a random bucket
+    bucket_distance_dict  = {}
 
-    for bucket in buckets:
-        bucket_coords, bucket_colour = bucket
-        distance_from_smallimg_avg = calcEuclideanColourDistance(smallimg_avg, bucket_colour)
-        bucket_colour_key = stringify(bucket_colour)
-        bucket_distance_dict[bucket_colour_key] = [distance_from_smallimg_avg, bucket_coords]
-        if distance_from_smallimg_avg < min_distance:
-            min_distance = distance_from_smallimg_avg
+    for bucketcolour in bucketcolour_alltilesinbucket_dict:
+        current_distance = calcEuclideanColourDistance(unstringify(bucketcolour), smallimg_avg)
+        bucket_distance_dict[bucketcolour] = current_distance
+        if (current_distance < min_distance):
+            bestbucket = bucketcolour
+            min_distance = current_distance
 
-    # finds a few more tiles that are closer so that each small image can map to a range of colours of tiles instead of just 1
+    # finds a few more buckets
     possible_buckets = []
-    for bucket_colour_key, distance_coords in bucket_distance_dict.iteritems():
-        if(abs(distance_coords[0] - min_distance) <= 20):
-            possible_buckets.append((bucket_colour_key, list([img_name, distance_coords[0], distance_coords[1]])))
-    # possible_buckets.append((current_bucket_colour_key, list([img_name,distance, current_bucket_coords])))
-
+    for bucketcolour in bucketcolour_alltilesinbucket_dict:
+        current_distance = bucket_distance_dict[bucketcolour]
+        if (abs(current_distance - min_distance) <= 20 ):
+            possible_buckets.append((bucketcolour, list([img_name, current_distance])))
     return possible_buckets
-
 
 def closest_avg_in_bucket():
     def closest_avg_in_bucket_nested(a, b):
@@ -105,71 +121,49 @@ def return_bytearray(imgfile_imgbytes):
     return img
 
 def return_final_pairs(key_valuelist):
-    smallimgpath_distance_tilecoords = key_valuelist[1]
-    smallimgpath, distance, tilecoords = smallimgpath_distance_tilecoords
-    return (stringify(tilecoords), smallimgpath)
-
-def find_smallimg_path(tilecoords_imgpath_dict, coordList):
-    coordkey = stringify(coordList)
-    if coordkey in tilecoords_imgpath_dict:
-        return tilecoords_imgpath_dict[coordkey]
-    return
+    key, valueList = key_valuelist
+    return (key, valueList[0])
 
 
 def main():
     sc = SparkContext(appName="tileMapper")
     print("I do all the input output jazz")
+    tile_size = 16
 
     ###############big image tile averages computed in parallel################
     big_image = sc.binaryFiles("/user/bitnami/project_input/calvin.jpg")
-    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, 32, 32))
-    buckets = tile_avgs.collect()
+    tile_avgs = big_image.flatMap(lambda x: extract_opencv_tiles(x, tile_size, tile_size)).combineByKey(Combiner, MergeValue, MergeCombiners)
+    buckets = tile_avgs.collectAsMap()
 
     ##########################################################################
-    broadcastBucket = sc.broadcast(buckets)  # this isn't too big
-    smallimgs = sc.binaryFiles(
-        "/user/bitnami/big_dataset_2/", minPartitions=None)
-    final_tiles_mapped = smallimgs.flatMap(lambda x: get_possible_buckets(x, broadcastBucket)) # expected (bucket_colour_key, list([img_name, bucket_distance_dict[bucket_colour_key], current_bucket_coords]))
-    final_tiles_reduced = final_tiles_mapped.reduceByKey(closest_avg_in_bucket())
+    # now this broadcast thing is a problem when the tile size is too small
+    broadcastBucket = sc.broadcast(buckets)
 
-    tilecoords_imgpath_rdd = final_tiles_reduced.map(lambda k: return_final_pairs(k))
+    smallimgs = sc.binaryFiles("/user/bitnami/big_dataset_2/", minPartitions=None)
+    final_tiles = smallimgs.flatMap(lambda x: get_possible_buckets(x, broadcastBucket)).reduceByKey(closest_avg_in_bucket())
+    bucketcolour_smallimgpath_rdd = final_tiles.map(lambda k: return_final_pairs(k))
+    bucketcolour_smallimgpath_dict = bucketcolour_smallimgpath_rdd.collectAsMap()
 
-    tilecoords_imgpath_dict = tilecoords_imgpath_rdd.collectAsMap()
-    for ti in tilecoords_imgpath_dict:
-        print(ti)
-    print(len(tilecoords_imgpath_dict), "SHOULD BE 12")
-    # reconstruct final image
-    flatbuckets = tile_avgs.map(flatten).collect()
-    current_row = None
-    no_of_row = 0
-    no_of_col = 0
-    tile_size = flatbuckets[0][1]
+    # future work (use dataframes instead of collecting both as map)  
+    # future work : another map-reduce/ way to pass the size of the target image dynamically
+    canvas = np.zeros((768, 1024, 3), np.uint8)
+    # # assumes buckets is a dictionary (used collectAsMap, got values correctly as RGB, [list of coords])
+    for bucketcolour_alltilesinbucket in buckets.iteritems():
+        bucket_colour, alltilesinbucket = bucketcolour_alltilesinbucket
+        try:
+            read_smallimg_rdd = sc.binaryFiles(bucketcolour_smallimgpath_dict[bucket_colour], minPartitions=None)
+            read_smallimg = read_smallimg_rdd.take(1)
+            file_bytes = np.asarray(bytearray(read_smallimg[0][1]), dtype=np.uint8)
+            read_smallimg_rdd.unpersist()
 
-    for tile in flatbuckets:
-        if tile[0] == current_row:
-            no_of_col += 1
-        else:
-            current_row = tile[0]
-            no_of_col = 1
-            no_of_row += 1
-            current_row = tile[0]
-    canvas = np.zeros((no_of_row * tile_size, no_of_col * tile_size, 3), np.uint8)
-
-
-    ## Put small images into the big image canvas
-    for coord_key, smallimg_path in tilecoords_imgpath_dict.iteritems():
-        coords = coord_key.split(",")
-        y0 = int(coords[0])
-        x0 = int(coords[2])
-
-        read_smallimg_rdd = sc.binaryFiles(smallimg_path, minPartitions=None)
-        read_smallimg = read_smallimg_rdd.take(1)
-        file_bytes = np.asarray(bytearray(read_smallimg[0][1]), dtype=np.uint8)
-
-        read_smallimg_rdd.unpersist()
-
-        little_tile = cv2.imdecode(file_bytes, 1)
-        canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (32, 32))
+            little_tile = cv2.imdecode(file_bytes, 1)
+            for coords in alltilesinbucket:
+                y0 = int(coords[0])
+                x0 = int(coords[2])
+                canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (tile_size, tile_size))
+        except KeyError:
+            # print("Key not found : " ,bucket_colour)
+            continue
 
     cv2.imwrite('mosaic.jpg', canvas)
     sc.stop()
