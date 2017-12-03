@@ -162,6 +162,7 @@ def main():
                 x0 = int(coords[2])
                 canvas[y0:y0 + tile_size, x0:x0 + tile_size] = cv2.resize(little_tile, (tile_size, tile_size))
         except KeyError:
+            # note that this won't happen for a big enough dataset of images, but still need to fix later
             # print("Key not found : " ,bucket_colour)
             continue
 
